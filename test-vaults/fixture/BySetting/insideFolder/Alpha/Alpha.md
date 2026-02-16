@@ -1,0 +1,1 @@
+# Alpha (insideFolder)\n\nFolder note stored inside the folder for insideFolder mode.

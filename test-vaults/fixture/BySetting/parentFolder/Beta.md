@@ -1,0 +1,1 @@
+# Beta (parentFolder)\n\nFolder note stored in the parent folder for parentFolder mode.
