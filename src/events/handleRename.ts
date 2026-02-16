@@ -18,6 +18,50 @@ import {
 	getFolderPathFromString, removeExtension, getFileNameFromPathString,
 } from 'src/functions/utils';
 
+const guardedFolderPaths = new Set<string>();
+const guardedFilePaths = new Set<string>();
+
+function isGuardedMovePath(path: string): boolean {
+	// Ignore rename events emitted by our own sync operations.
+	if (guardedFilePaths.has(path)) {
+		return true;
+	}
+	for (const folderPath of guardedFolderPaths) {
+		if (path === folderPath || path.startsWith(`${folderPath}/`)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+async function withMoveGuard<T>(
+	folderPaths: string[],
+	filePaths: string[],
+	fn: () => Promise<T>,
+): Promise<T> {
+	// Scope a critical section so cascading rename events don't re-enter move sync logic.
+	const foldersToGuard = folderPaths.filter((path) => path.trim().length);
+	const filesToGuard = filePaths.filter((path) => path.trim().length);
+	foldersToGuard.forEach((path) => guardedFolderPaths.add(path));
+	filesToGuard.forEach((path) => guardedFilePaths.add(path));
+	try {
+		return await fn();
+	} finally {
+		foldersToGuard.forEach((path) => guardedFolderPaths.delete(path));
+		filesToGuard.forEach((path) => guardedFilePaths.delete(path));
+	}
+}
+
+function cleanupMovedFolderNote(file: TFile, oldFolder: TAbstractFile | null, plugin: FolderNotesPlugin): void {
+	// Fallback: preserve current behavior by removing folder-note markers when association breaks.
+	unmarkFileAsFolderNote(file, plugin);
+	if (oldFolder instanceof TFolder) {
+		removeActiveFolder(plugin);
+		hideFolderNoteInFileExplorer(oldFolder.path, plugin);
+		unmarkFolderAsFolderNote(oldFolder, plugin);
+	}
+}
+
 export function handleRename(
 	file: TAbstractFile,
 	oldPath: string,
@@ -106,6 +150,11 @@ export async function handleFileMove(
 	oldPath: string,
 	plugin: FolderNotesPlugin,
 ): Promise<void> {
+	// Short-circuit on events triggered by plugin-managed move operations.
+	if (isGuardedMovePath(oldPath) || isGuardedMovePath(file.path)) {
+		return;
+	}
+
 	const { folderName, oldFileName, newFolder, excludedFolder, oldFolder, folderNote } = getArgs(
 		plugin, file, oldPath,
 	);
@@ -137,11 +186,70 @@ export async function handleFileMove(
 			unmarkFolderAsFolderNote(oldFolder, plugin);
 		}
 	} else if (fileMovedFromOldFolderNote) {
-		unmarkFileAsFolderNote(file, plugin);
-		if (oldFolder instanceof TFolder) {
-			removeActiveFolder(plugin);
-			hideFolderNoteInFileExplorer(oldFolder.path, plugin);
-			unmarkFolderAsFolderNote(oldFolder, plugin);
+		if (!plugin.settings.syncMove || !(oldFolder instanceof TFolder)) {
+			cleanupMovedFolderNote(file, oldFolder, plugin);
+			return;
+		}
+		// Note -> folder sync is intentionally disabled for vaultFolder because there is no stable parent
+		// location semantics for deriving the folder move target.
+		if (plugin.settings.storageLocation === 'vaultFolder') { return; }
+
+		const sourceFolderPath = oldFolder.path;
+		const targetParent = file.parent?.path || '';
+		const newFolderPath = (targetParent === '' || targetParent === '/')
+			? oldFolder.name
+			: `${targetParent}/${oldFolder.name}`;
+		// For insideFolder storage we must restore the note back inside the moved folder.
+		const noteInsidePath = `${newFolderPath}/${file.name}`;
+
+		// Prevent invalid "move folder into itself/descendant" operations.
+		if (targetParent === sourceFolderPath || targetParent.startsWith(`${sourceFolderPath}/`)) {
+			new Notice('Cannot move a folder into itself or a subfolder');
+			cleanupMovedFolderNote(file, oldFolder, plugin);
+			return;
+		}
+
+		// Abort early on destination collisions to avoid partial move state.
+		const existingAtFolderTarget = plugin.app.vault.getAbstractFileByPath(newFolderPath);
+		if (existingAtFolderTarget && existingAtFolderTarget.path !== sourceFolderPath) {
+			new Notice('A file or folder with the same name already exists');
+			cleanupMovedFolderNote(file, oldFolder, plugin);
+			return;
+		}
+
+		if (plugin.settings.storageLocation === 'insideFolder') {
+			const existingAtNoteTarget = plugin.app.vault.getAbstractFileByPath(noteInsidePath);
+			if (existingAtNoteTarget && existingAtNoteTarget.path !== file.path) {
+				new Notice('A file with the same name already exists in the destination folder');
+				cleanupMovedFolderNote(file, oldFolder, plugin);
+				return;
+			}
+		}
+
+		const guardedFolders = [sourceFolderPath, newFolderPath];
+		const guardedFiles = [oldPath, file.path, noteInsidePath];
+		try {
+			await withMoveGuard(guardedFolders, guardedFiles, async () => {
+				await plugin.app.fileManager.renameFile(oldFolder, newFolderPath);
+				if (plugin.settings.storageLocation !== 'insideFolder') { return; }
+				try {
+					await plugin.app.fileManager.renameFile(file, noteInsidePath);
+				} catch (error) {
+					// insideFolder is a two-step move; rollback folder move if note restore fails.
+					const movedFolder = plugin.app.vault.getAbstractFileByPath(newFolderPath);
+					if (movedFolder instanceof TFolder) {
+						try {
+							await plugin.app.fileManager.renameFile(movedFolder, sourceFolderPath);
+							new Notice('Move failed and changes were reverted');
+						} catch {
+							new Notice('Move partially failed; please fix folder and note paths manually');
+						}
+					}
+					throw error;
+				}
+			});
+		} catch {
+			cleanupMovedFolderNote(file, oldFolder, plugin);
 		}
 	}
 }

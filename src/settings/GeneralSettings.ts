@@ -269,9 +269,11 @@ export async function renderGeneral(settingsTab: SettingsTab): Promise<void> {
 					},
 					),
 			);
+	}
+	if (settingsTab.plugin.settings.storageLocation !== 'vaultFolder') {
 		new Setting(containerEl)
-			.setName('Move folder notes when moving the folder')
-			.setDesc('Move the folder note file along with the folder when it is moved')
+			.setName('Sync folder and folder note moves')
+			.setDesc('Keep folders and folder notes aligned when either one is moved. This may move an entire folder tree.')
 			.addToggle((toggle) =>
 				toggle
 					.setValue(settingsTab.plugin.settings.syncMove)
