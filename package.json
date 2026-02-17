@@ -4,14 +4,12 @@
 	"description": "Adds Folder Notes to the default file tree.",
 	"main": "main.js",
 	"scripts": {
-		"fn-dev": "node esbuild.config.mjs",
-		"dev": "npm run fn-dev",
 		"fn-build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production && npm run test-vault:copy-build",
-		"fv-build": "tsc -noEmit -skipLibCheck && node ./src/obsidian-folder-overview/esbuild.config.mjs production",
+		"fn-dev": "node esbuild.config.mjs",
+		"fn-gen-test-vault": "node ./test-vaults/copy-build-to-fixture.mjs && node ./test-vaults/prepare-sandbox.mjs",
 		"version": "node version-bump.mjs && git add manifest.json versions.json",
-		"folder-overview": "node ./src/obsidian-folder-overview/esbuild.config.mjs",
-		"fv-dev": "npm run folder-overview",
-		"test-vault": "node ./test-vaults/copy-build-to-fixture.mjs && node ./test-vaults/prepare-sandbox.mjs"
+		"fv-build": "tsc -noEmit -skipLibCheck && node ./src/obsidian-folder-overview/esbuild.config.mjs production",
+		"fv-dev": "node ./src/obsidian-folder-overview/esbuild.config.mjs"
 	},
 	"keywords": [],
 	"author": "Lost Paul",
