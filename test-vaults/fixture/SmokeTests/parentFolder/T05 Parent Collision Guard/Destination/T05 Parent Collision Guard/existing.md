@@ -1,0 +1,1 @@
+pre-existing folder should trigger collision guard

@@ -16,14 +16,14 @@ npm run test-vault:copy-build
 ```
 
 Workflow:
-1. Build plugin (`npm run fn-build`) (this now auto-copies build artifacts into `fixture`).
+1. Build plugin (`npm run fn-build`) (this auto-copies build artifacts into `fixture`).
 2. Create fresh sandbox from fixture (`npm run test-vault:prepare-sandbox`).
 3. Open `test-vaults/sandbox` in Obsidian.
-4. Enable `syncMove`.
-5. insideFolder scenario:
-   - Set storage location to `insideFolder`.
-   - Move `BySetting/insideFolder/Alpha/Alpha.md` to `Inbox`.
-6. Re-run `npm run test-vault:prepare-sandbox` to reset sandbox.
-7. parentFolder scenario:
-   - Set storage location to `parentFolder`.
-   - Move `BySetting/parentFolder/Beta.md` to `Inbox`.
+4. Open `START_HERE.md`.
+5. Run one test case at a time from its folder note in `SmokeTests/`.
+6. Re-run `npm run test-vault:prepare-sandbox` before each additional test to reset state.
+
+Notes:
+- Each smoke test uses a unique note/folder combination to avoid cross-test interference.
+- The moved note is the test describer note for each scenario.
+- Instructions and expected results are documented in each test describer note for direct in-app use.

@@ -1,1 +1,0 @@
-insideFolder test: move BySetting/insideFolder/Alpha/Alpha.md to Inbox.\nparentFolder test: move BySetting/parentFolder/Beta.md to Inbox.
