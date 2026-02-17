@@ -20,6 +20,20 @@ import {
 
 const guardedFolderPaths = new Set<string>();
 const guardedFilePaths = new Set<string>();
+const suppressedFileMoveEvents = new Set<string>();
+
+function getMoveEventKey(fromPath: string, toPath: string): string {
+	return `${fromPath}=>${toPath}`;
+}
+
+function consumeSuppressedFileMoveEvent(fromPath: string, toPath: string): boolean {
+	const key = getMoveEventKey(fromPath, toPath);
+	if (!suppressedFileMoveEvents.has(key)) {
+		return false;
+	}
+	suppressedFileMoveEvents.delete(key);
+	return true;
+}
 
 function isGuardedMovePath(path: string): boolean {
 	// Ignore rename events emitted by our own sync operations.
@@ -52,9 +66,20 @@ async function withMoveGuard<T>(
 	}
 }
 
-function cleanupMovedFolderNote(file: TFile, oldFolder: TAbstractFile | null, plugin: FolderNotesPlugin): void {
+function cleanupMovedFolderNote(
+	file: TFile,
+	oldPath: string,
+	oldFolder: TAbstractFile | null,
+	plugin: FolderNotesPlugin,
+): void {
 	// Fallback: preserve current behavior by removing folder-note markers when association breaks.
+	// Remove class from both old and new paths to handle file-explorer timing/path update races.
+	removeCSSClassFromFileExplorerEL(oldPath, 'is-folder-note', false, plugin);
 	unmarkFileAsFolderNote(file, plugin);
+	// Queue a second removal on the post-rename path after Obsidian updates explorer nodes.
+	setTimeout(() => {
+		removeCSSClassFromFileExplorerEL(file.path, 'is-folder-note', false, plugin);
+	}, 0);
 	if (oldFolder instanceof TFolder) {
 		removeActiveFolder(plugin);
 		hideFolderNoteInFileExplorer(oldFolder.path, plugin);
@@ -65,7 +90,11 @@ function cleanupMovedFolderNote(file: TFile, oldFolder: TAbstractFile | null, pl
 async function revertMovedFolderNote(file: TFile, oldPath: string, plugin: FolderNotesPlugin): Promise<boolean> {
 	if (file.path === oldPath) { return true; }
 	try {
-		await plugin.app.fileManager.renameFile(file, oldPath);
+		const sourcePath = file.path;
+		suppressedFileMoveEvents.add(getMoveEventKey(sourcePath, oldPath));
+		await withMoveGuard([], [file.path, oldPath], async () => {
+			await plugin.app.fileManager.renameFile(file, oldPath);
+		});
 		return true;
 	} catch {
 		new Notice('Could not revert moved folder note automatically');
@@ -161,6 +190,10 @@ export async function handleFileMove(
 	oldPath: string,
 	plugin: FolderNotesPlugin,
 ): Promise<void> {
+	if (consumeSuppressedFileMoveEvent(oldPath, file.path)) {
+		return;
+	}
+
 	// Short-circuit on events triggered by plugin-managed move operations.
 	if (isGuardedMovePath(oldPath) || isGuardedMovePath(file.path)) {
 		return;
@@ -184,7 +217,7 @@ export async function handleFileMove(
 		);
 	} else if (fileMovedFromOldFolderNote) {
 		if (!plugin.settings.syncMove || !(oldFolder instanceof TFolder)) {
-			cleanupMovedFolderNote(file, oldFolder, plugin);
+			cleanupMovedFolderNote(file, oldPath, oldFolder, plugin);
 			return;
 		}
 		// Note -> folder sync is intentionally disabled for vaultFolder because there is no stable parent
@@ -203,7 +236,7 @@ export async function handleFileMove(
 		if (targetParent === sourceFolderPath || targetParent.startsWith(`${sourceFolderPath}/`)) {
 			new Notice('Cannot move a folder into itself or a subfolder');
 			if (!await revertMovedFolderNote(file, oldPath, plugin)) {
-				cleanupMovedFolderNote(file, oldFolder, plugin);
+				cleanupMovedFolderNote(file, oldPath, oldFolder, plugin);
 			}
 			return;
 		}
@@ -213,7 +246,7 @@ export async function handleFileMove(
 		if (existingAtFolderTarget && existingAtFolderTarget.path !== sourceFolderPath) {
 			new Notice('A file or folder with the same name already exists');
 			if (!await revertMovedFolderNote(file, oldPath, plugin)) {
-				cleanupMovedFolderNote(file, oldFolder, plugin);
+				cleanupMovedFolderNote(file, oldPath, oldFolder, plugin);
 			}
 			return;
 		}
@@ -223,7 +256,7 @@ export async function handleFileMove(
 			if (existingAtNoteTarget && existingAtNoteTarget.path !== file.path) {
 				new Notice('A file with the same name already exists in the destination folder');
 				if (!await revertMovedFolderNote(file, oldPath, plugin)) {
-					cleanupMovedFolderNote(file, oldFolder, plugin);
+					cleanupMovedFolderNote(file, oldPath, oldFolder, plugin);
 				}
 				return;
 			}
@@ -252,7 +285,7 @@ export async function handleFileMove(
 				}
 			});
 		} catch {
-			cleanupMovedFolderNote(file, oldFolder, plugin);
+			cleanupMovedFolderNote(file, oldPath, oldFolder, plugin);
 		}
 	} else if (isFolderNoteInNewFolder) {
 		if (excludedFolder?.disableFolderNote) { return; }
