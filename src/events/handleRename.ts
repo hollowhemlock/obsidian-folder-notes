@@ -62,6 +62,17 @@ function cleanupMovedFolderNote(file: TFile, oldFolder: TAbstractFile | null, pl
 	}
 }
 
+async function revertMovedFolderNote(file: TFile, oldPath: string, plugin: FolderNotesPlugin): Promise<boolean> {
+	if (file.path === oldPath) { return true; }
+	try {
+		await plugin.app.fileManager.renameFile(file, oldPath);
+		return true;
+	} catch {
+		new Notice('Could not revert moved folder note automatically');
+		return false;
+	}
+}
+
 export function handleRename(
 	file: TAbstractFile,
 	oldPath: string,
@@ -171,20 +182,6 @@ export async function handleFileMove(
 		renameExistingFolderNote(
 			file, oldPath, plugin, excludedFolder, oldFolder,
 		);
-	} else if (isFolderNoteInNewFolder) {
-		if (excludedFolder?.disableFolderNote) { return; }
-		markFileAsFolderNote(file, plugin);
-		if (newFolder instanceof TFolder) {
-			markFolderWithFolderNoteClasses(newFolder, plugin);
-			if (plugin.app.workspace.getActiveFile()?.path === file.path) {
-				removeActiveFolder(plugin);
-				setActiveFolder(newFolder.path, plugin);
-			}
-		}
-		if (oldFolder instanceof TFolder) {
-			hideFolderNoteInFileExplorer(oldFolder.path, plugin);
-			unmarkFolderAsFolderNote(oldFolder, plugin);
-		}
 	} else if (fileMovedFromOldFolderNote) {
 		if (!plugin.settings.syncMove || !(oldFolder instanceof TFolder)) {
 			cleanupMovedFolderNote(file, oldFolder, plugin);
@@ -205,7 +202,9 @@ export async function handleFileMove(
 		// Prevent invalid "move folder into itself/descendant" operations.
 		if (targetParent === sourceFolderPath || targetParent.startsWith(`${sourceFolderPath}/`)) {
 			new Notice('Cannot move a folder into itself or a subfolder');
-			cleanupMovedFolderNote(file, oldFolder, plugin);
+			if (!await revertMovedFolderNote(file, oldPath, plugin)) {
+				cleanupMovedFolderNote(file, oldFolder, plugin);
+			}
 			return;
 		}
 
@@ -213,7 +212,9 @@ export async function handleFileMove(
 		const existingAtFolderTarget = plugin.app.vault.getAbstractFileByPath(newFolderPath);
 		if (existingAtFolderTarget && existingAtFolderTarget.path !== sourceFolderPath) {
 			new Notice('A file or folder with the same name already exists');
-			cleanupMovedFolderNote(file, oldFolder, plugin);
+			if (!await revertMovedFolderNote(file, oldPath, plugin)) {
+				cleanupMovedFolderNote(file, oldFolder, plugin);
+			}
 			return;
 		}
 
@@ -221,7 +222,9 @@ export async function handleFileMove(
 			const existingAtNoteTarget = plugin.app.vault.getAbstractFileByPath(noteInsidePath);
 			if (existingAtNoteTarget && existingAtNoteTarget.path !== file.path) {
 				new Notice('A file with the same name already exists in the destination folder');
-				cleanupMovedFolderNote(file, oldFolder, plugin);
+				if (!await revertMovedFolderNote(file, oldPath, plugin)) {
+					cleanupMovedFolderNote(file, oldFolder, plugin);
+				}
 				return;
 			}
 		}
@@ -250,6 +253,20 @@ export async function handleFileMove(
 			});
 		} catch {
 			cleanupMovedFolderNote(file, oldFolder, plugin);
+		}
+	} else if (isFolderNoteInNewFolder) {
+		if (excludedFolder?.disableFolderNote) { return; }
+		markFileAsFolderNote(file, plugin);
+		if (newFolder instanceof TFolder) {
+			markFolderWithFolderNoteClasses(newFolder, plugin);
+			if (plugin.app.workspace.getActiveFile()?.path === file.path) {
+				removeActiveFolder(plugin);
+				setActiveFolder(newFolder.path, plugin);
+			}
+		}
+		if (oldFolder instanceof TFolder) {
+			hideFolderNoteInFileExplorer(oldFolder.path, plugin);
+			unmarkFolderAsFolderNote(oldFolder, plugin);
 		}
 	}
 }
