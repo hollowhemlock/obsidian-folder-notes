@@ -8,9 +8,10 @@
 		"dev": "npm run fn-dev",
 		"fn-dev": "node esbuild.config.mjs",
 		"fn-copy-build-to-fixture": "node ./test-vaults/copy-build-to-fixture.mjs",
-		"fn-gen-test-vault": "npm run fn-copy-build-to-fixture && node ./test-vaults/prepare-sandbox.mjs",
+		"fn-prepare-sandbox": "node ./test-vaults/prepare-sandbox.mjs",
 		"fn-open-fixture": "node ./test-vaults/open-vault.mjs fixture",
 		"fn-open-sandbox": "node ./test-vaults/open-vault.mjs sandbox",
+		"fn-open-sandbox-fresh": "npm run fn-build && npm run fn-copy-build-to-fixture && npm run fn-prepare-sandbox && npm run fn-open-sandbox",
 		"version": "node version-bump.mjs && git add manifest.json versions.json",
 		"fv-build": "tsc -noEmit -skipLibCheck && node ./src/obsidian-folder-overview/esbuild.config.mjs production",
 		"fv-dev": "node ./src/obsidian-folder-overview/esbuild.config.mjs"
