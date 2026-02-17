@@ -40,7 +40,7 @@ if (presetArg) {
 }
 
 if (!pluginId || targetVaults.length === 0) {
-	throw new Error('Usage: node ./scripts/copy-build-to-fixture.mjs [--fixture|--sandbox|--both] | [plugin-id] <target-vault-path> [more-target-vault-paths...]');
+	throw new Error('Usage: node ./scripts/copy-build.mjs [--fixture|--sandbox|--both] | [plugin-id] <target-vault-path> [more-target-vault-paths...]');
 }
 
 const sourceFiles = [

@@ -4,14 +4,14 @@
 	"description": "Adds Folder Notes to the default file tree.",
 	"main": "main.js",
 	"scripts": {
-		"fn-build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production && node ./scripts/copy-build-to-fixture.mjs test-vaults/fixture test-vaults/sandbox",
+		"fn-build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production && node ./scripts/copy-build.mjs test-vaults/fixture test-vaults/sandbox",
 		"dev": "npm run fn-dev",
 		"fn-dev": "node esbuild.config.mjs",
-		"fn-prepare-sandbox": "node ./scripts/prepare-sandbox.mjs",
-		"fn-refresh-sandbox-content": "node ./scripts/refresh-sandbox-content.mjs",
+		"fn-new-sandbox": "node ./scripts/sync-vault-one-way.mjs --full",
+		"fn-refresh-sandbox": "node ./scripts/sync-vault-one-way.mjs --content-only",
 		"fn-open-fixture": "node ./scripts/open-vault.mjs test-vaults/fixture",
 		"fn-open-sandbox": "node ./scripts/open-vault.mjs test-vaults/sandbox",
-		"fn-open-sandbox-fresh": "npm run fn-build && npm run fn-prepare-sandbox && npm run fn-open-sandbox",
+		"fn-open-sandbox-fresh": "npm run fn-build && npm run fn-new-sandbox && npm run fn-open-sandbox",
 		"version": "node version-bump.mjs && git add manifest.json versions.json",
 		"fv-build": "tsc -noEmit -skipLibCheck && node ./src/obsidian-folder-overview/esbuild.config.mjs production",
 		"fv-dev": "node ./src/obsidian-folder-overview/esbuild.config.mjs"
