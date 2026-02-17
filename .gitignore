@@ -19,8 +19,20 @@ main.js
 data.json
 .obsidian
 
+
 # Exclude macOS Finder (System Explorer) View States
 .DS_Store
 
 venv
-test-vaults/sandbox/
+
+# Test Vaults
+## Fixture
+!test-vaults/fixture/.obsidian
+test-vaults/fixture/.obsidian/**/workspace.json
+test-vaults/fixture/.obsidian/**/workspaces.json
+test-vaults/fixture/.obsidian/plugins/*/main.js
+test-vaults/fixture/.obsidian/plugins/*/manifest.json
+test-vaults/fixture/.obsidian/plugins/*/styles.css
+
+## Sandbox
+test-vaults/sandbox
