@@ -48,6 +48,7 @@ export default class FolderNotesPlugin extends Plugin {
 	tabManager: TabManager;
 	settingsOpened = false;
 	askModalCurrentlyOpen = false;
+	isRunningMoveFolderWithNoteCommand = false;
 	fvIndexDB: FvIndexDB;
 
 	async onload(): Promise<void> {

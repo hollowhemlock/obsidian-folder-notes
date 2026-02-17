@@ -3,6 +3,7 @@ import {
 	Notice,
 	TFile,
 	Platform,
+	FuzzySuggestModal,
 	type App,
 	type Menu,
 	type TAbstractFile,
@@ -18,6 +19,7 @@ import {
 	openFolderNote,
 	extractFolderName,
 	detachFolderNote,
+	getFolderNoteFolder,
 } from './functions/folderNoteFunctions';
 import { ExcludedFolder } from './ExcludeFolders/ExcludeFolder';
 import { getFolderPathFromString, getFileExplorerActiveFolder } from './functions/utils';
@@ -47,6 +49,28 @@ export class Commands {
 	}
 
 	regularCommands(): void {
+		this.plugin.addCommand({
+			id: 'move-folder-note-and-folder',
+			name: 'Move folder note and folder',
+			callback: () => {
+				const file = this.app.workspace.getActiveFile();
+				if (!(file instanceof TFile)) {
+					new Notice('Open a file first');
+					return;
+				}
+				const linkedFolder = this.getLinkedFolderForActiveFile(file);
+				if (!(linkedFolder instanceof TFolder)) {
+					// Fallback to Obsidian's default move/rename UX for non-folder-note files.
+					this.openDefaultMoveForFile(file);
+					return;
+				}
+				void this.moveFolderNoteAndFolder(file, linkedFolder).catch((error: unknown) => {
+					console.error('Folder Notes move command failed', error);
+					new Notice('Folder Notes move failed; check console');
+				});
+			},
+		});
+
 		this.plugin.addCommand({
 			id: 'turn-into-folder-note',
 			name: 'Use this file as the folder note for its parent folder',
@@ -266,6 +290,148 @@ export class Commands {
 				return false;
 			},
 		});
+	}
+
+	private openDefaultMoveForFile(file: TFile): void {
+		const commandIds = [
+			'app:move-file',
+			'file-explorer:move-file',
+		];
+		for (const commandId of commandIds) {
+			if (this.app.commands.executeCommandById(commandId)) {
+				return;
+			}
+		}
+		// Last resort fallback so the hotkey still opens native UI if command IDs differ by version.
+		this.plugin.app.fileManager.promptForFileRename(file);
+	}
+
+	private getLinkedFolderForActiveFile(file: TFile | null): TFolder | null {
+		if (!(file instanceof TFile)) return null;
+		const linkedFolder = getFolderNoteFolder(this.plugin, file, file.basename);
+		if (!(linkedFolder instanceof TFolder)) return null;
+		const linkedFolderNote = getFolderNote(
+			this.plugin,
+			linkedFolder.path,
+			this.plugin.settings.storageLocation,
+		);
+		if (!(linkedFolderNote instanceof TFile) || linkedFolderNote.path !== file.path) {
+			return null;
+		}
+		return linkedFolder;
+	}
+
+	private async chooseDestinationParentPath(initialPath: string): Promise<string | null> {
+		const folderPaths = this.plugin.app.vault
+			.getAllLoadedFiles()
+			.filter((item): item is TFolder => item instanceof TFolder)
+			.map((folder) => folder.path)
+			.sort((a, b) => a.localeCompare(b));
+		const items = ['/', ...folderPaths];
+		let selectedPath: string | null = null;
+		let resolvePromise: (value: string | null) => void = () => {};
+		const result = new Promise<string | null>((resolve) => { resolvePromise = resolve; });
+
+		const modal = new class extends FuzzySuggestModal<string> {
+			constructor(app: App) {
+				super(app);
+			}
+			getItems(): string[] {
+				return items;
+			}
+			getItemText(item: string): string {
+				return item === '/' ? 'Vault root /' : item;
+			}
+			onChooseItem(item: string): void {
+				selectedPath = item === '/' ? '' : item;
+			}
+			onClose(): void {
+				super.onClose();
+				// Obsidian may close the modal before calling onChooseItem; resolve on microtask
+				// so a same-tick selection can still update selectedPath.
+				queueMicrotask(() => {
+					resolvePromise(selectedPath);
+				});
+			}
+		}(this.plugin.app);
+
+		modal.setPlaceholder('Select destination parent folder');
+		modal.setInstructions([
+			{ command: 'Enter', purpose: 'Move folder note and folder' },
+			{ command: 'Esc', purpose: 'Cancel' },
+		]);
+		const startValue = initialPath.trim() === '' || initialPath === '/' ? '/' : initialPath;
+		modal.inputEl.value = startValue;
+
+		modal.open();
+		return result;
+	}
+
+	private async moveFolderNoteAndFolder(file: TFile, linkedFolder: TFolder): Promise<void> {
+		if (this.plugin.settings.storageLocation === 'vaultFolder') {
+			new Notice('Move command is not supported for vaultFolder storage');
+			return;
+		}
+
+		const currentParentPath = getFolderPathFromString(file.path);
+		const targetParentPath = await this.chooseDestinationParentPath(currentParentPath);
+		if (targetParentPath === null) {
+			new Notice('Move cancelled');
+			return;
+		}
+
+		if (
+			targetParentPath === linkedFolder.path ||
+			targetParentPath.startsWith(`${linkedFolder.path}/`)
+		) {
+			new Notice('Cannot move a folder into itself or a subfolder');
+			return;
+		}
+
+		const newFolderPath = (targetParentPath.trim() === '' || targetParentPath === '/')
+			? linkedFolder.name
+			: `${targetParentPath}/${linkedFolder.name}`;
+
+		const collisionAtFolderTarget = this.plugin.app.vault.getAbstractFileByPath(newFolderPath);
+		if (collisionAtFolderTarget && collisionAtFolderTarget.path !== linkedFolder.path) {
+			new Notice('A file or folder with the same name already exists');
+			return;
+		}
+
+		let targetNotePath = file.path;
+		if (this.plugin.settings.storageLocation === 'parentFolder') {
+			targetNotePath = (targetParentPath.trim() === '' || targetParentPath === '/')
+				? file.name
+				: `${targetParentPath}/${file.name}`;
+			const collisionAtNoteTarget = this.plugin.app.vault.getAbstractFileByPath(targetNotePath);
+			if (collisionAtNoteTarget && collisionAtNoteTarget.path !== file.path) {
+				new Notice('A file with the same name already exists in the destination folder');
+				return;
+			}
+		}
+
+		this.plugin.isRunningMoveFolderWithNoteCommand = true;
+		try {
+			await this.plugin.app.fileManager.renameFile(linkedFolder, newFolderPath);
+			if (this.plugin.settings.storageLocation !== 'parentFolder' || file.path === targetNotePath) {
+				return;
+			}
+			try {
+				await this.plugin.app.fileManager.renameFile(file, targetNotePath);
+			} catch {
+				const movedFolder = this.plugin.app.vault.getAbstractFileByPath(newFolderPath);
+				if (movedFolder instanceof TFolder) {
+					try {
+						await this.plugin.app.fileManager.renameFile(movedFolder, linkedFolder.path);
+						new Notice('Move failed and changes were reverted');
+					} catch {
+						new Notice('Move partially failed; please fix folder and note paths manually');
+					}
+				}
+			}
+		} finally {
+			this.plugin.isRunningMoveFolderWithNoteCommand = false;
+		}
 	}
 
 	fileCommands(): void {

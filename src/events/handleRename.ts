@@ -190,6 +190,10 @@ export async function handleFileMove(
 	oldPath: string,
 	plugin: FolderNotesPlugin,
 ): Promise<void> {
+	if (plugin.isRunningMoveFolderWithNoteCommand) {
+		return;
+	}
+
 	if (consumeSuppressedFileMoveEvent(oldPath, file.path)) {
 		return;
 	}
