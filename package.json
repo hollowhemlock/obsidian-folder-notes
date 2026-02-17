@@ -4,7 +4,7 @@
 	"description": "Adds Folder Notes to the default file tree.",
 	"main": "main.js",
 	"scripts": {
-		"fn-build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production && npm run fn-copy-build-to-fixture",
+		"fn-build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production && npm run fn-copy-build-to-fixture && npm run fn-copy-build-to-sandbox",
 		"dev": "npm run fn-dev",
 		"fn-dev": "node esbuild.config.mjs",
 		"fn-copy-build-to-fixture": "node ./scripts/copy-build-to-fixture.mjs",
