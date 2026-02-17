@@ -46,12 +46,6 @@ Generic vault opener (pass relative path):
 node ./scripts/open-vault.mjs test-vaults/sandbox
 ```
 
-Build, create a new sandbox, and open sandbox in one command:
-
-```powershell
-npm run fn-open-sandbox-fresh
-```
-
 Generic copy command (explicit plugin id + target vault path):
 
 ```powershell
