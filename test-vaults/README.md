@@ -9,6 +9,18 @@ Prepare sandbox vault:
 npm run fn-gen-test-vault
 ```
 
+Open fixture vault in Obsidian:
+
+```powershell
+npm run fn-open-fixture
+```
+
+Open sandbox vault in Obsidian:
+
+```powershell
+npm run fn-open-sandbox
+```
+
 Copy current build to fixture vault plugin folder:
 
 ```powershell
