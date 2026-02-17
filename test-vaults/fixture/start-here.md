@@ -2,7 +2,7 @@
 
 run each test in a fresh sandbox:
 1. npm run fn-build
-2. npm run test-vault:prepare-sandbox
+2. npm run fn-gen-test-vault
 3. open test-vaults/sandbox in obsidian
 
 open one test note (the note you move is the test describer):

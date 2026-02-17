@@ -6,22 +6,22 @@
 Prepare sandbox vault:
 
 ```powershell
-npm run test-vault
+npm run fn-gen-test-vault
 ```
 
 Copy current build to fixture vault plugin folder:
 
 ```powershell
-npm run test-vault:copy-build
+npm run fn-copy-build-to-fixture
 ```
 
 Workflow:
 1. Build plugin (`npm run fn-build`) (this auto-copies build artifacts into `fixture`).
-2. Create fresh sandbox from fixture (`npm run test-vault:prepare-sandbox`).
+2. Create fresh sandbox from fixture (`npm run fn-gen-test-vault`).
 3. Open `test-vaults/sandbox` in Obsidian.
 4. Open `start-here.md`.
 5. Run one test case at a time from its folder note in `SmokeTests/`.
-6. Re-run `npm run test-vault:prepare-sandbox` before each additional test to reset state.
+6. Re-run `npm run fn-gen-test-vault` before each additional test to reset state.
 
 Notes:
 - Each smoke test uses a unique note/folder combination to avoid cross-test interference.
