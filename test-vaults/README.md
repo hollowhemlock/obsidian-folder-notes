@@ -19,7 +19,7 @@ Workflow:
 1. Build plugin (`npm run fn-build`) (this auto-copies build artifacts into `fixture`).
 2. Create fresh sandbox from fixture (`npm run test-vault:prepare-sandbox`).
 3. Open `test-vaults/sandbox` in Obsidian.
-4. Open `START_HERE.md`.
+4. Open `start-here.md`.
 5. Run one test case at a time from its folder note in `SmokeTests/`.
 6. Re-run `npm run test-vault:prepare-sandbox` before each additional test to reset state.
 
