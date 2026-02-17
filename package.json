@@ -11,9 +11,7 @@
 		"version": "node version-bump.mjs && git add manifest.json versions.json",
 		"folder-overview": "node ./src/obsidian-folder-overview/esbuild.config.mjs",
 		"fv-dev": "npm run folder-overview",
-		"test-vault": "npm run test-vault:prepare-sandbox",
-		"test-vault:prepare-sandbox": "node ./test-vaults/prepare-sandbox.mjs",
-		"test-vault:copy-build": "node ./test-vaults/copy-build-to-fixture.mjs"
+		"test-vault": "node ./test-vaults/copy-build-to-fixture.mjs && node ./test-vaults/prepare-sandbox.mjs"
 	},
 	"keywords": [],
 	"author": "Lost Paul",
