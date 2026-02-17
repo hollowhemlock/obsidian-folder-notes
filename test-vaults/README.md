@@ -51,6 +51,18 @@ Copy current build directly to sandbox vault plugin folder:
 npm run fn-copy-build-to-sandbox
 ```
 
+Generic copy command (explicit plugin id + target vault path):
+
+```powershell
+node ./scripts/copy-build-to-fixture.mjs folder-notes test-vaults/sandbox
+```
+
+Generic copy command (multiple target vault paths):
+
+```powershell
+node ./scripts/copy-build-to-fixture.mjs --both
+```
+
 Workflow:
 1. Build plugin (`npm run fn-build`) (this auto-copies build artifacts into `fixture`).
 2. Create fresh sandbox from fixture (`npm run fn-prepare-sandbox`).
