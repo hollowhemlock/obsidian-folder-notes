@@ -27,6 +27,12 @@ Open sandbox vault in Obsidian:
 npm run fn-open-sandbox
 ```
 
+Generic vault opener (pass relative path):
+
+```powershell
+node ./scripts/open-vault.mjs test-vaults/sandbox
+```
+
 Build, refresh sandbox, and open sandbox in one command:
 
 ```powershell

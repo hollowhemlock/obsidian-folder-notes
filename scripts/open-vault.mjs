@@ -2,11 +2,11 @@ import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 
-const vaultArg = process.argv[2] ?? 'sandbox';
-const vaultPath = path.resolve(`test-vaults/${vaultArg}`);
+const vaultArg = process.argv[2] ?? 'test-vaults/sandbox';
+const vaultPath = path.resolve(vaultArg);
 
 if (!existsSync(vaultPath)) {
-	throw new Error(`Vault not found: test-vaults/${vaultArg}`);
+	throw new Error(`Vault not found: ${vaultArg}`);
 }
 
 const vaultUrl = `obsidian://open?path=${encodeURIComponent(vaultPath)}`;
