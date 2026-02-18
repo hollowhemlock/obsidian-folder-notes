@@ -1,5 +1,24 @@
 # handleRename — Move Logic
 
+## What This Doc Covers
+
+This file documents how Folder Notes reacts to Obsidian `rename` events, including both:
+- **Move events** (parent path changed)
+- **Rename events** (same parent, name changed)
+
+It combines two entry sources:
+- **GUI path**: user drags a file or folder in File Explorer (Obsidian moves first)
+- **Plugin command path**: plugin command `move-folder-note-and-folder` (plugin validates and moves first)
+
+## Quick Summary
+
+- There are two move strategies:
+  - **Reactive (GUI drag/drop)**: Obsidian performs the move, then plugin validates and may revert.
+  - **Proactive (plugin command)**: plugin validates destination first, then performs move(s).
+- `handleRename` is the central dispatcher for both file and folder rename/move events.
+- The plugin includes multiple reentrancy guards because its own `renameFile(...)` calls emit additional rename events.
+- For non-folder-note files, the plugin command falls back to Obsidian’s native move UI (`app:move-file` / `file-explorer:move-file`, then `promptForFileRename` as last resort).
+
 ## Obsidian API Reference
 
 | API | Description | Docs |
@@ -16,8 +35,20 @@ Two independent flows handle file/folder moves. They never intersect in their co
 
 | Entry | Trigger | Strategy |
 |---|---|---|
-| **GUI path** | User drags item in file explorer | **Reactive** — Obsidian moves the item first, plugin validates after and reverts or follows |
-| **Hotkey path** | `move-folder-note-and-folder` command | **Proactive** — plugin validates first, then moves. `handleRename` fires but skips at line 193 |
+| **GUI path** | User drags **file or folder** in file explorer | **Reactive** — Obsidian moves the item first, plugin validates after and reverts or follows |
+| **Plugin command path** | `move-folder-note-and-folder` plugin command | **Proactive** — plugin validates first, then moves. `handleRename` fires but skips at line 193 |
+
+## Plugin vs Core Command Mapping
+
+The Folder Notes plugin command is:
+- ID: `move-folder-note-and-folder`
+- Name: **Folder notes: Move folder note and folder** (command palette prefix + command name)
+
+When the active file is **not** a folder note, the plugin command intentionally falls back to Obsidian core move UX:
+- `Move current file to another folder` (Obsidian core command wording)
+- `app:move-file` (internal command ID used by this plugin)
+- `file-explorer:move-file`
+- `FileManager.promptForFileRename` (internal fallback)
 
 ## Temporal Comparison (color-matched by phase)
 
@@ -25,9 +56,9 @@ Two independent flows handle file/folder moves. They never intersect in their co
 
 ```mermaid
 graph LR
-    subgraph Hotkey ["Hotkey Path"]
+    subgraph Command ["Plugin Command Path"]
         direction TB
-        H1["1. User runs command"]:::trigger
+        H1["1. User runs plugin command"]:::trigger
         H2["2. Is file a folder note?"]:::identify
         H3["3. Check storageLocation"]:::settings
         H4["4. User picks destination via modal"]:::destination
@@ -42,8 +73,8 @@ graph LR
 
     subgraph GUI ["GUI Path"]
         direction TB
-        G1["1. User drags file"]:::trigger
-        G2["2. Obsidian moves file on disk"]:::destination
+        G1["1. User drags file or folder"]:::trigger
+        G2["2. Obsidian moves item on disk"]:::destination
         G3["3. Rename event fires"]:::identify
         G4["4. Identify type + folder note status"]:::identify
         G5["5. Check syncMove + storageLocation"]:::settings
@@ -56,7 +87,7 @@ graph LR
         G1 --> G2 --> G3 --> G4 --> G5 --> G6 --> G7 --> G8 --> G9 --> G10 --> G11
     end
 
-    Hotkey ~~~ GUI
+    Command ~~~ GUI
 
     classDef trigger fill:#4CAF50,color:#fff
     classDef destination fill:#FF9800,color:#fff
@@ -68,16 +99,16 @@ graph LR
     classDef rollback fill:#607D8B,color:#fff
 ```
 
-The inversion is visible by color — orange (destination) is step 4 in hotkey but step 2 in GUI.
-Red (validation) is steps 5-7 in hotkey (pre-move) but 6-8 in GUI (post-move with reverts).
+The inversion is visible by color — orange (destination) is step 4 in plugin command flow but step 2 in GUI.
+Red (validation) is steps 5-7 in plugin command flow (pre-move) but 6-8 in GUI (post-move with reverts).
 
-## Hotkey Path — Decision Tree (Commands.ts)
+## Plugin Command Path — Decision Tree (Commands.ts)
 
 ```mermaid
 graph TD
-    subgraph hotkey ["Hotkey: move-folder-note-and-folder"]
-        HK_START([Command fired]) --> HK_FILE{Active file is<br>a folder note}
-        HK_FILE -->|no| HK_FALLBACK["Open native move dialog<br>becomes GUI path"]
+    subgraph command ["Plugin command: move-folder-note-and-folder"]
+        HK_START([Plugin command fired]) --> HK_FILE{Active file is<br>a folder note}
+        HK_FILE -->|no| HK_FALLBACK["Run Obsidian core command (`Move current file to another folder`)<br>becomes GUI path"]
         HK_FILE -->|yes| HK_STORE{storageLocation}
         HK_STORE -->|vaultFolder| HK_UNSUP["Notice: not supported"]
         HK_STORE -->|insideFolder or parentFolder| HK_VAL{Pre-validate}
@@ -100,8 +131,8 @@ graph TD
 
 ```mermaid
 graph TD
-    subgraph gui ["GUI: file dragged in explorer"]
-        DRAG([User drags item in file explorer])
+    subgraph gui ["GUI: file or folder dragged in explorer"]
+        DRAG([User drags file or folder in file explorer])
         DRAG --> CORE["Obsidian core: item moved on disk"]
         CORE --> START(["Obsidian fires rename event"])
         START --> TYPE{What moved}
@@ -188,17 +219,133 @@ graph TD
 | Folder-note file | 9 (2a-2i) |
 | Regular file | 4 (3a, 3b, 3e, 3f) |
 | **GUI total** | **20** |
-| **Hotkey total** | **7** (fallback, unsupported, 3 validations, 2 executions) |
+| **Plugin command total** | **7** (fallback, unsupported, 3 validations, 2 executions) |
 
-## Hotkey vs GUI Comparison
+## Plugin Command vs GUI Comparison
 
-| | GUI (drag in explorer) | Hotkey command |
+| | GUI (drag in explorer) | Plugin command |
 |---|---|---|
 | **When validation happens** | After Obsidian moved the file — plugin must revert on error | Before any file moves — rejects early with a Notice |
 | **Who moves what first** | User moves the note, plugin moves the folder to follow | Plugin moves the folder first, then moves the note |
 | **Rollback mechanism** | `revertMovedFolderNote` renames note back | Catches `renameFile` failure, renames folder back |
 | **handleRename interaction** | Full decision tree runs | Sets `isRunningMoveFolderWithNoteCommand = true`, skips at line 193 |
-| **Non-folder-note files** | Falls through to State 3 | Falls back to native `app:move-file` dialog (becomes GUI path) |
+| **Non-folder-note files** | Falls through to State 3 | Falls back to native `Move current file to another folder` dialog (becomes GUI path) |
 | **vaultFolder support** | State 2 silently no-ops | Explicitly blocked with Notice |
 | **insideFolder move** | Two-step: move folder, restore note inside (with rollback) | Single-step: move folder, note is already inside |
 | **parentFolder move** | Single-step: move folder to follow note (note already at dest) | Two-step: move folder, then move note (with rollback) |
+
+## Reentrancy Guards
+
+The plugin's own `renameFile` calls trigger new Obsidian rename events. Without protection, this creates infinite loops. Three mechanisms prevent this:
+
+### `withMoveGuard` (line 51)
+
+Wraps a critical section. Any paths added to `guardedFolderPaths` or `guardedFilePaths` cause `handleFileMove` to bail at line 202 via `isGuardedMovePath`. Folder guards also cover all descendant paths (`path.startsWith(folderPath/)`). Guards are removed in a `finally` block so they clean up even on error.
+
+Used by:
+- `handleFileMove` State 2f/2i (line 272) — guards both the source and destination folder/file paths during folder-follows-note moves
+- `revertMovedFolderNote` (line 95) — guards both old and new path during revert
+
+### `suppressedFileMoveEvents` (line 23)
+
+A one-shot suppression keyed on `fromPath=>toPath`. When the plugin is about to trigger a rename that would re-enter `handleFileMove`, it registers the exact expected event key. `consumeSuppressedFileMoveEvent` (line 29) checks and deletes the key, returning `true` once. This is more targeted than `withMoveGuard` — it suppresses exactly one specific event.
+
+Used by:
+- `revertMovedFolderNote` (line 94) — suppresses the revert rename event so it doesn't re-enter move logic
+
+### `isRunningMoveFolderWithNoteCommand` (line 193)
+
+A boolean flag on the plugin instance. Set to `true` by the plugin command in `Commands.ts` (line 413), cleared in a `finally` block (line 433). Causes `handleFileMove` to return immediately. This is the simplest guard — a whole-function bypass for the duration of the plugin command.
+
+## Rename Handling
+
+`handleRename` dispatches renames (same parent, different name) separately from moves. This is the other half of the dispatch at lines 133-144.
+
+### Folder Rename (`handleFolderRename`, line 374)
+
+When a folder is renamed, the folder note's filename must sync to match.
+
+| # | storageLocation | syncFolderName | Has folder note | Outcome | Line |
+|---|---|---|---|---|---|
+| R1 | any | any | no | **No-op** | 384 |
+| R2 | any | any | yes, excluded with `disableSync` | **Unreachable with current guard** (`folderNote` is guaranteed before this branch) | 388 |
+| R3 | any | `false` | yes | **No-op** | 392 |
+| R4 | `parentFolder` | `true` | yes, parent also changed | **No-op** if `!syncMove`, else rename note at new parent | 398 |
+| R5 | `parentFolder` | `true` | yes, same parent | **Rename note** to match new folder name | 405 |
+| R6 | `insideFolder` | `true` | yes | **Rename note** inside folder to match new folder name | 409 |
+
+### File Rename (`handleFileRename`, line 416)
+
+When a file is renamed, it may become or stop being a folder note.
+
+| # | Condition | syncFolderName | Outcome | Line |
+|---|---|---|---|---|
+| FR1 | New name matches a folder, not excluded, not detached | any | **Mark as folder note** via CSS | 436 |
+| FR2 | Name no longer matches any folder | any | **Remove** folder note CSS classes | 444 |
+| FR3 | Excluded with `disableSync` or `syncFolderName=false` | n/a | **No-op** (early return) | 449 |
+| FR4 | New name matches same folder it was already in | `true` | **Update CSS** — re-mark file and folder | 454 |
+| FR5 | Was a folder note, renamed — folder should follow | `true` | **Rename folder** to match new note name | 460 |
+| FR5a | ...but a folder with that name already exists | `true` | **Revert** file rename + Notice | 498 |
+
+## CSS Class Lifecycle (`only-has-folder-note`)
+
+Lines 113-127 run on **every** rename event, before the move/rename dispatch. They maintain the `only-has-folder-note` CSS class on both the new and old parent folders:
+
+```
+if folder is empty (only has its folder note) AND has a folder note:
+    add 'only-has-folder-note'
+else:
+    remove 'only-has-folder-note'
+```
+
+This check uses `plugin.isEmptyFolderNoteFolder()` and runs for both `file.parent` (new location) and the old folder (resolved from `oldPath`). It ensures the class updates immediately when files move in or out of a folder.
+
+## Excluded Folder Path Updates (`updateExcludedFolderPath`, line 506)
+
+Runs on every folder rename/move event (line 132), before the rename/move dispatch. When a folder's path changes, any exclusion rules targeting that folder become stale. This function:
+
+1. Finds all excluded folder entries whose `path` includes the old path (line 511)
+2. For exact matches: replaces the path directly (line 517)
+3. For nested matches: splits on `/`, replaces the matching segment, rejoins (line 521-527)
+4. Saves settings (line 529)
+
+This runs regardless of `syncMove` or `syncFolderName` — exclusion rules always track folder paths.
+
+## Source Line Reference
+
+| Path ID | Function | Line |
+|---|---|---|
+| 1a-1g | `handleFolderMove` | 169 |
+| 2a | `handleFileMove` — `cleanupMovedFolderNote` | 224 |
+| 2b | `handleFileMove` — vaultFolder early return | 229 |
+| 2c-2e | `handleFileMove` — `revertMovedFolderNote` | 240, 249, 259 |
+| 2f | `handleFileMove` — `withMoveGuard` + two-step move | 272 |
+| 2g-2h | `handleFileMove` — `revertMovedFolderNote` | 240, 249 |
+| 2i | `handleFileMove` — `withMoveGuard` + single move | 272 |
+| 3a | `handleFileMove` — `renameExistingFolderNote` | 218 |
+| 3b | `handleFileMove` — `markFileAsFolderNote` | 296 |
+| 3e | `handleFileMove` — excluded early return | 295 |
+| 3f | `handleFileMove` — implicit fall-through | 308 |
+| R1-R6 | `handleFolderRename` | 374 |
+| FR1-FR5 | `handleFileRename` | 416 |
+
+## Known Edge Cases
+
+### 1g: `vaultFolder` folder move uses wrong destination
+
+`handleFolderMove` (line 181) computes `newFolder.parent?.path / folderNote.name` for the note's new path. For `parentFolder` this is correct — the note should sit next to the folder. But for `vaultFolder` the note should stay in the configured vault folder, not move to the folder's new parent. This path moves the note **out of** the vault folder.
+
+### 3a: `renameExistingFolderNote` temporarily modifies exclusion rules
+
+When a file is moved into a folder where it would become a folder note but one already exists (line 339), the plugin reverts the move via `renameFile(file, oldPath)`. But this revert would itself trigger sync logic (renaming the folder to match). To prevent this, `renameExistingFolderNote`:
+
+1. If no exclusion exists for the folder: **creates a temporary one** (`addExcludedFolder`, line 355)
+2. If one exists but `disableSync` is false: **temporarily sets `disableSync = true`** (line 358)
+3. Calls `renameFile` to revert
+4. In the `.then()` callback: **removes the temporary exclusion** or **restores `disableSync`** (lines 363-368)
+
+This is a workaround to suppress rename-sync during revert without using the guard mechanism.
+
+### Rename handlers don't use reentrancy guards
+
+`handleFolderRename` (line 412) and `renameFolderOnFileRename` (line 503) call `renameFile` without `withMoveGuard`. Their rename events will re-enter `handleRename`, relying on the new name/path being correct to exit early (e.g., `fileName === oldFileName` at line 381). The `renameExistingFolderNote` workaround above is evidence this implicit approach requires special handling.
