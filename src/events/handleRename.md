@@ -36,7 +36,7 @@ Two independent flows handle file/folder moves. They never intersect in their co
 | Entry | Trigger | Strategy |
 |---|---|---|
 | **GUI path** | User drags **file or folder** in file explorer | **Reactive** — Obsidian moves the item first, plugin validates after and reverts or follows |
-| **Plugin command path** | `move-folder-note-and-folder` plugin command | **Proactive** — plugin validates first, then moves. `handleRename` fires but skips at line 193 |
+| **Plugin command path** | `move-folder-note-and-folder` plugin command | **Proactive** — plugin validates first, then moves. `handleFileMove` skips at line 193; `handleFolderMove` still runs (see [concurrency note](#plugin-command--handlefoldermove-concurrency)) |
 
 ## Plugin vs Core Command Mapping
 
@@ -122,8 +122,10 @@ graph TD
         HK_EXEC -->|parentFolder| HK_PAR["API: move folder<br>then move note"]
         HK_PAR -->|note move fails| HK_ROLL["API: move folder back<br>Notice: reverted"]
 
-        HK_INF --> HK_GUARD["handleRename fires<br>but skips at line 193"]
-        HK_PAR --> HK_GUARD
+        HK_INF --> HK_GUARD_F["handleFolderMove fires<br>insideFolder: early return (line 170)<br>parentFolder: moves note (races with step 9)"]
+        HK_PAR --> HK_GUARD_F
+        HK_INF --> HK_GUARD_N["handleFileMove fires<br>skips at line 193"]
+        HK_PAR --> HK_GUARD_N
     end
 ```
 
@@ -228,7 +230,7 @@ graph TD
 | **When validation happens** | After Obsidian moved the file — plugin must revert on error | Before any file moves — rejects early with a Notice |
 | **Who moves what first** | User moves the note, plugin moves the folder to follow | Plugin moves the folder first, then moves the note |
 | **Rollback mechanism** | `revertMovedFolderNote` renames note back | Catches `renameFile` failure, renames folder back |
-| **handleRename interaction** | Full decision tree runs | Sets `isRunningMoveFolderWithNoteCommand = true`, skips at line 193 |
+| **handleRename interaction** | Full decision tree runs | Sets `isRunningMoveFolderWithNoteCommand = true`; `handleFileMove` skips at line 193, but `handleFolderMove` still runs unguarded (see [concurrency note](#plugin-command--handlefoldermove-concurrency)) |
 | **Non-folder-note files** | Falls through to State 3 | Falls back to native `Move current file to another folder` dialog (becomes GUI path) |
 | **vaultFolder support** | State 2 silently no-ops | Explicitly blocked with Notice |
 | **insideFolder move** | Two-step: move folder, restore note inside (with rollback) | Single-step: move folder, note is already inside |
@@ -257,6 +259,35 @@ Used by:
 
 A boolean flag on the plugin instance. Set to `true` by the plugin command in `Commands.ts` (line 413), cleared in a `finally` block (line 433). Causes `handleFileMove` to return immediately. This is the simplest guard — a whole-function bypass for the duration of the plugin command.
 
+> **Scope limitation:** This flag only guards `handleFileMove`. It does **not** guard `handleFolderMove`. When the plugin command moves a folder, the resulting rename event dispatches to `handleFolderMove`, which runs without any guard. See [Plugin Command + handleFolderMove Concurrency](#plugin-command--handlefoldermove-concurrency) for implications.
+
+### Plugin Command + `handleFolderMove` Concurrency
+
+When the plugin command calls `await renameFile(linkedFolder, newFolderPath)`, the folder rename event fires and `handleFolderMove` runs — unguarded by `isRunningMoveFolderWithNoteCommand`. For `parentFolder` storage with `syncMove: true`, `handleFolderMove` finds the note at its old path and calls `renameFile(folderNote, newPath)` **without await** (line 184). The command then resumes and checks `file.path === targetNotePath` to decide whether to move the note itself.
+
+The command avoids a double-move because Obsidian's `renameFile` appears to update `TFile.path` synchronously on the object reference before the returned Promise resolves. By the time the command's `await` completes, `file.path` already reflects the move performed by `handleFolderMove`, so the `file.path === targetNotePath` guard (Commands.ts) evaluates to `true` and the command skips its own note move.
+
+**This relies on an undocumented Obsidian implementation detail.** If `renameFile` were to defer the `TFile.path` update, the command would attempt a second move on an already-moved file. Per-storage breakdown:
+
+| storageLocation | Plugin command behavior | `handleFolderMove` behavior | Race? |
+|---|---|---|---|
+| `insideFolder` | Moves folder; note travels inside | Returns early at line 170 | **No** |
+| `parentFolder` | Moves folder, then moves note | Also moves note (fire-and-forget) | **Yes** — avoided by `file.path` check |
+| `vaultFolder` | Blocked with Notice | Would run (buggy destination — see 1g) | **N/A** — command exits before reaching `renameFile` |
+
+## Concurrency Model
+
+There is no debouncing or queueing in `handleRename`. Each Obsidian rename event is dispatched independently. The reentrancy guards (`withMoveGuard`, `suppressedFileMoveEvents`, `isRunningMoveFolderWithNoteCommand`) protect against **cascading events from a single logical operation** — they do not serialize concurrent user operations.
+
+If the user triggers rapid successive renames (e.g., drag-dropping multiple items quickly), each event runs its own handler instance. Because `handleFileMove` is `async` and guards are set/cleared per-operation:
+
+1. Operation A sets guards, starts moving
+2. Operation B fires — its paths may or may not overlap A's guarded paths
+3. A's `finally` block clears its guards
+4. B continues without coverage from A's guards
+
+In practice this is unlikely to cause issues because Obsidian serializes user-initiated file operations in the explorer, and vault events fire in order. But programmatic callers that trigger multiple rapid `renameFile` calls should be aware that guard sets are per-operation, not global locks.
+
 ## Rename Handling
 
 `handleRename` dispatches renames (same parent, different name) separately from moves. This is the other half of the dispatch at lines 133-144.
@@ -264,6 +295,8 @@ A boolean flag on the plugin instance. Set to `true` by the plugin command in `C
 ### Folder Rename (`handleFolderRename`, line 374)
 
 When a folder is renamed, the folder note's filename must sync to match.
+
+> **`folderNote.path` mutation (lines 402, 405, 409):** `handleFolderRename` directly mutates `folderNote.path` before calling `renameFile`. This is a workaround: `getFolderNote(plugin, oldPath)` resolves the `TFile` using the **old** folder path, but for `insideFolder` storage the note has physically moved with the folder (it's inside it). The `TFile` reference may still hold the stale pre-rename path. Direct mutation ensures `renameFile` sees the correct current location. For `parentFolder` storage this mutation is a no-op (the note didn't move when the folder was renamed).
 
 | # | storageLocation | syncFolderName | Has folder note | Outcome | Line |
 |---|---|---|---|---|---|
@@ -311,6 +344,8 @@ Runs on every folder rename/move event (line 132), before the rename/move dispat
 
 This runs regardless of `syncMove` or `syncFolderName` — exclusion rules always track folder paths.
 
+> **Bug: nested path replacement is broken (line 526).** The code does `folders[folders.indexOf(folder.name)] = folder.name`, where `folder.name` is the **new** name after the rename. For renames, the old path segments contain the old name, so `indexOf(newName)` returns `-1` and the assignment sets a numeric property on the array without modifying any element. For moves (name unchanged), it finds the name but replaces it with itself — a no-op — while the parent path change is what actually needs updating. Only exact-match paths (line 517) are updated correctly; nested excluded paths become stale after both renames and moves.
+
 ## Source Line Reference
 
 | Path ID | Function | Line |
@@ -345,6 +380,10 @@ When a file is moved into a folder where it would become a folder note but one a
 4. In the `.then()` callback: **removes the temporary exclusion** or **restores `disableSync`** (lines 363-368)
 
 This is a workaround to suppress rename-sync during revert without using the guard mechanism.
+
+### `handleFolderMove` uses no reentrancy guards
+
+`handleFolderMove` (line 169) calls `renameFile(folderNote, newPath)` without `withMoveGuard`, `suppressedFileMoveEvents`, or `isRunningMoveFolderWithNoteCommand`. The cascading rename event is for a **file** (the moved note), not a folder, so it enters `handleFileMove` — which has all three guards. The lack of guards on `handleFolderMove` itself is safe because the cascading event cannot re-enter `handleFolderMove`. However, the fire-and-forget `renameFile` call (no `await`) means the note move runs concurrently with any caller that `await`s the folder rename. See [Plugin Command + handleFolderMove Concurrency](#plugin-command--handlefoldermove-concurrency) for the interaction with the plugin command.
 
 ### Rename handlers don't use reentrancy guards
 
